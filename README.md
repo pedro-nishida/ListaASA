@@ -1,116 +1,113 @@
 # Sistema de Controle de Pedidos e Almoxarifado
 
-Sistema para controle de pedidos com comunicação assíncrona entre sistemas de pedidos e almoxarifado utilizando RabbitMQ e FastAPI.
+Sistema para gerenciamento de pedidos e almoxarifado usando RabbitMQ para comunicação assíncrona entre os componentes.
+
+## Visão Geral
+
+O sistema consiste em dois componentes principais:
+
+1. **Publisher (Pedidos)**: Envia pedidos para uma fila no RabbitMQ
+2. **Consumer (Almoxarifado)**: Processa os pedidos da fila quando disponível
+
+## Fluxo de Trabalho
+
+```
+[Usuário] -> python publisher.py "Produto" 10 -> [RabbitMQ: fila_pedidos]
+                                                         |
+                                                         v
+[RabbitMQ: fila_processados] <- [Consumer: processa pedido]
+```
 
 ## Requisitos
 
-- Python 3.7+
-- FastAPI
-- Uvicorn
-- Pika (cliente RabbitMQ)
+- Python 3.6+
 - RabbitMQ Server
+- Biblioteca pika
 
 ## Instalação
 
+1. Clone o repositório ou baixe os arquivos
+2. Instale as dependências:
+
 ```bash
-# Instalar dependências
-pip install fastapi uvicorn pika
-
-# Instalar RabbitMQ (Ubuntu/Debian)
-sudo apt-get install rabbitmq-server
-
-# Iniciar RabbitMQ
-sudo service rabbitmq-server start
+pip install pika
 ```
 
-## Executando o Sistema
+3. Certifique-se de que o servidor RabbitMQ esteja em execução:
 
-1. **Inicie o serviço de Pedidos**:
-   ```bash
-   cd /root/ListaASA
-   python publisher.py
-   ```
+```bash
+# Ubuntu/Debian
+sudo service rabbitmq-server start
 
-2. **Inicie o serviço de Almoxarifado**:
-   ```bash
-   cd /root/ListaASA
-   python consumer.py
-   ```
+# Windows (via comando, após instalação)
+rabbitmq-server start
+```
 
-## Usando a API
+## Como Usar
 
-### API de Pedidos (Publicador)
+### Publicar um pedido
 
-- **URL**: http://localhost:5000/docs
-- **Criar um novo pedido**:
-  ```bash
-  curl -X 'POST' \
-    'http://localhost:5000/pedido' \
-    -H 'Content-Type: application/json' \
-    -d '{
-      "produto": "Notebook",
-      "quantidade": 2
-    }'
-  ```
+```bash
+python publisher.py "Nome do Produto" <quantidade>
 
-### API de Almoxarifado (Consumidor)
+# Exemplo:
+python publisher.py "Smartphone" 5
+```
 
-- **URL**: http://localhost:5001/docs
-- **Processar pedido**:
-  ```bash
-  curl -X 'GET' 'http://localhost:5001/processar-pedido'
-  ```
+### Processar pedidos
 
-## Acessando o RabbitMQ
+#### Modo único (processa um pedido de cada vez)
+```bash
+python consumer.py
+```
 
-1. **Ativar o plugin de gerenciamento** (se ainda não estiver ativado):
-   ```bash
-   sudo rabbitmq-plugins enable rabbitmq_management
-   ```
-
-2. **Acessar o painel de administração**:
-   - URL: http://localhost:15672
-   - Usuário padrão: `guest`
-   - Senha padrão: `guest`
-
-3. **Visualizar filas**:
-   - No menu lateral, clique em "Queues"
-   - Procure pelas filas `pedidos` e `pedidos_processados`
-
-4. **Monitorar mensagens**:
-   - Clique na fila desejada para ver detalhes
-   - Use as guias "Get messages" para visualizar mensagens na fila
+#### Modo contínuo (aguarda novos pedidos indefinidamente)
+```bash
+python consumer.py --continuo
+```
 
 ## Estrutura das Mensagens
 
-### Pedido (enviado para a fila `pedidos`)
+### Pedido enviado
 ```json
 {
-    "id": "xxxxxx",
+    "id": "uuid-gerado-automaticamente",
     "produto": "Nome do Produto",
-    "quantidade": 1,
+    "quantidade": 5,
     "status": "enviado_almoxarifado"
 }
 ```
 
-### Pedido Processado (enviado para a fila `pedidos_processados`)
+### Pedido processado
 ```json
 {
-    "id": "xxxxxx",
+    "id": "mesmo-uuid-do-pedido-original",
     "produto": "Nome do Produto",
-    "quantidade": 1,
+    "quantidade": 5,
     "status": "processado_almoxarifado"
 }
 ```
 
-## Modo de Consumo Contínuo
+## Acessando o RabbitMQ Management Console
 
-Para habilitar o consumo contínuo de mensagens, edite o arquivo `consumer.py` e descomente as linhas:
+Para monitorar filas e mensagens:
 
-```python
-# consumer_thread = threading.Thread(target=start_consumer)
-# consumer_thread.daemon = True
-# consumer_thread.start()
+1. Habilite o plugin de gerenciamento (se ainda não estiver habilitado):
+```bash
+sudo rabbitmq-plugins enable rabbitmq_management
 ```
 
-Este modo permite processar pedidos automaticamente, sem necessidade de chamar o endpoint manualmente.
+2. Acesse o console de gerenciamento:
+   - URL: http://localhost:15672
+   - Usuário padrão: guest
+   - Senha padrão: guest
+
+## Detalhes Técnicos
+
+- O sistema utiliza o exchange `amq.direct` do RabbitMQ
+- Filas utilizadas:
+  - `fila_pedidos`: Armazena pedidos a serem processados
+  - `fila_processados`: Armazena pedidos já processados pelo almoxarifado
+- Routing keys:
+  - `pedido`: Para mensagens de pedidos
+  - `pedido_processado`: Para mensagens de pedidos processados

@@ -2,24 +2,9 @@ import json
 import pika
 import sys
 import os
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import Dict, Optional
-import uvicorn
-import threading
+import time
 
-app = FastAPI(title="API de Almoxarifado", 
-              description="Sistema de processamento de pedidos com RabbitMQ",
-              version="1.0.0")
-
-# Modelo Pydantic para respostas de processamento
-class ProcessamentoResponse(BaseModel):
-    mensagem: str
-    pedido_original: Optional[Dict] = None
-    pedido_processado: Optional[Dict] = None
-
-# Configuração melhorada do RabbitMQ com autenticação explícita
+# Configuração do RabbitMQ com autenticação explícita
 def get_rabbitmq_connection():
     credentials = pika.PlainCredentials('guest', 'guest')
     parameters = pika.ConnectionParameters(
@@ -30,34 +15,43 @@ def get_rabbitmq_connection():
     )
     return pika.BlockingConnection(parameters=parameters)
 
-@app.get("/processar-pedido", response_model=ProcessamentoResponse)
-async def processar_pedido():
+def processar_pedido():
+    """
+    Processa um único pedido da fila
+    """
     try:
         # Conectar ao RabbitMQ
         connection = get_rabbitmq_connection()
         channel = connection.channel()
         
         # Declarar filas e bind com exchange
-        channel.queue_declare(queue='pedidos')
+        channel.queue_declare(queue='fila_pedidos')
         channel.queue_bind(
             exchange='amq.direct',
-            queue='pedidos',
+            queue='fila_pedidos',
             routing_key='pedido'
         )
         
-        channel.queue_declare(queue='pedidos_processados')
+        channel.queue_declare(queue='fila_processados')
         channel.queue_bind(
             exchange='amq.direct',
-            queue='pedidos_processados',
+            queue='fila_processados',
             routing_key='pedido_processado'
         )
         
         # Verificar se há mensagens na fila
-        method_frame, header_frame, body = channel.basic_get(queue='pedidos', auto_ack=True)
+        method_frame, header_frame, body = channel.basic_get(queue='fila_pedidos', auto_ack=True)
         
         if method_frame:
             # Processar o pedido
             pedido = json.loads(body)
+            print(f"[✓] Pedido recebido: {pedido['id']}")
+            print(f"    Produto: {pedido['produto']}")
+            print(f"    Quantidade: {pedido['quantidade']}")
+            
+            # Simular processamento
+            print(f"[*] Processando pedido...")
+            time.sleep(1)  # Simula o tempo de processamento
             
             # Criar pedido processado
             pedido_processado = {
@@ -75,29 +69,32 @@ async def processar_pedido():
             )
             
             connection.close()
-            return {
-                "mensagem": "Pedido processado com sucesso",
-                "pedido_original": pedido,
-                "pedido_processado": pedido_processado
-            }
+            print(f"[✓] Pedido processado com sucesso!")
+            return True
         else:
             connection.close()
-            return {"mensagem": "Não há pedidos para processar"}
+            print("[!] Não há pedidos para processar")
+            return False
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Falha ao processar pedido: {str(e)}")
+        print(f"[✗] Falha ao processar pedido: {str(e)}")
+        return False
 
-@app.get("/")
-async def root():
-    return {"mensagem": "API de Almoxarifado - Use /docs para ver a documentação completa"}
-
-# Adicionar função para consumo contínuo (modo daemon)
 def start_consumer():
+    """
+    Inicia o consumo contínuo da fila
+    """
     def callback(ch, method, properties, body):
         pedido = json.loads(body)
-        print(f"[x] Pedido recebido: {pedido['id']}")
+        print(f"[✓] Pedido recebido: {pedido['id']}")
+        print(f"    Produto: {pedido['produto']}")
+        print(f"    Quantidade: {pedido['quantidade']}")
         
-        # Processar o pedido
+        # Simular processamento
+        print(f"[*] Processando pedido...")
+        time.sleep(1)  # Simula o tempo de processamento
+        
+        # Criar pedido processado
         pedido_processado = {
             "id": pedido['id'],
             "produto": pedido['produto'],
@@ -111,28 +108,28 @@ def start_consumer():
             routing_key='pedido_processado',
             body=json.dumps(pedido_processado).encode('utf-8')
         )
-        print(f"[x] Pedido processado: {pedido['id']}")
+        print(f"[✓] Pedido processado e enviado para a fila de processados")
     
     try:
         connection = get_rabbitmq_connection()
         channel = connection.channel()
         
-        channel.queue_declare(queue='pedidos')
+        channel.queue_declare(queue='fila_pedidos')
         channel.queue_bind(
             exchange='amq.direct',
-            queue='pedidos',
+            queue='fila_pedidos',
             routing_key='pedido'
         )
         
-        channel.queue_declare(queue='pedidos_processados')
+        channel.queue_declare(queue='fila_processados')
         channel.queue_bind(
             exchange='amq.direct',
-            queue='pedidos_processados',
+            queue='fila_processados',
             routing_key='pedido_processado'
         )
         
         channel.basic_consume(
-            queue='pedidos',
+            queue='fila_pedidos',
             on_message_callback=callback,
             auto_ack=True
         )
@@ -148,15 +145,11 @@ def start_consumer():
             os._exit(0)
 
 if __name__ == '__main__':
-    # Escolha entre iniciar a API FastAPI ou o consumidor
-    
-    # Iniciar o consumidor em uma thread separada se necessário
-    # consumer_thread = threading.Thread(target=start_consumer)
-    # consumer_thread.daemon = True
-    # consumer_thread.start()
-    
-    # Iniciar o servidor FastAPI
-    uvicorn.run("consumer:app", host="0.0.0.0", port=5001, reload=True)
-    
-    # Ou para iniciar apenas o consumidor (descomente a linha abaixo):
-    # start_consumer()
+    # Verificar modo de execução
+    if len(sys.argv) > 1 and sys.argv[1] == "--continuo":
+        print("Iniciando modo de consumo contínuo...")
+        start_consumer()
+    else:
+        print("Processando um único pedido...")
+        processar_pedido()
+        print("Para iniciar o modo de consumo contínuo, use: python consumer.py --continuo")
